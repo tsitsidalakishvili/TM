@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import streamlit as st
+import altair as alt
 from neo4j import GraphDatabase, basic_auth
 from dotenv import load_dotenv
 import pydeck as pdk
@@ -631,13 +632,83 @@ with tab3:
     if driver is None:
         st.warning("Neo4j driver not available. Check connection settings.")
     else:
+        df_total = run_query("""
+        MATCH (p:Person)
+        RETURN count(p) AS total
+        """, silent=True)
+        total_supporters = int(df_total["total"].iloc[0]) if not df_total.empty else 0
+
+        df_manifesto = run_query("""
+        MATCH (p:Person)
+        RETURN CASE
+            WHEN p.agreesWithManifesto IS NULL THEN 'Unspecified'
+            WHEN p.agreesWithManifesto THEN 'Yes'
+            ELSE 'No'
+        END AS agrees, count(p) AS count
+        """, silent=True)
+
+        df_membership = run_query("""
+        MATCH (p:Person)
+        RETURN CASE
+            WHEN p.interestedInMembership IS NULL THEN 'Unspecified'
+            WHEN p.interestedInMembership THEN 'Yes'
+            ELSE 'No'
+        END AS interested, count(p) AS count
+        """, silent=True)
+
+        df_facebook = run_query("""
+        MATCH (p:Person)
+        RETURN CASE
+            WHEN p.facebookGroupMember IS NULL THEN 'Unspecified'
+            WHEN p.facebookGroupMember THEN 'Yes'
+            ELSE 'No'
+        END AS facebook, count(p) AS count
+        """, silent=True)
+
+        manifesto_yes = int(df_manifesto.loc[df_manifesto["agrees"] == "Yes", "count"].sum()) if not df_manifesto.empty else 0
+        membership_yes = int(df_membership.loc[df_membership["interested"] == "Yes", "count"].sum()) if not df_membership.empty else 0
+        facebook_yes = int(df_facebook.loc[df_facebook["facebook"] == "Yes", "count"].sum()) if not df_facebook.empty else 0
+
+        manifesto_pct = (manifesto_yes / total_supporters * 100) if total_supporters else 0
+        membership_pct = (membership_yes / total_supporters * 100) if total_supporters else 0
+        facebook_pct = (facebook_yes / total_supporters * 100) if total_supporters else 0
+
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Total Supporters", f"{total_supporters:,}")
+        metric_cols[1].metric("Manifesto Agree (%)", f"{manifesto_pct:.1f}%")
+        metric_cols[2].metric("Membership Interest (%)", f"{membership_pct:.1f}%")
+        metric_cols[3].metric("Facebook Group Member (%)", f"{facebook_pct:.1f}%")
+
         df_types = run_query("""
         MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
         RETURN st.name AS type, count(p) AS count
         """, silent=True)
         if not df_types.empty:
-            st.markdown("**Supporters by Type**")
-            st.bar_chart(df_types.set_index("type"))
+            type_cols = st.columns(2)
+            with type_cols[0]:
+                st.markdown("**Supporters by Type (Share)**")
+                type_share = (
+                    alt.Chart(df_types)
+                    .mark_arc(innerRadius=55)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("type:N"),
+                        tooltip=["type:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(type_share, use_container_width=True)
+            with type_cols[1]:
+                st.markdown("**Supporters by Type (Counts)**")
+                type_bar = (
+                    alt.Chart(df_types)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("type:N", sort="-y"),
+                        y=alt.Y("count:Q"),
+                        tooltip=["type:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(type_bar, use_container_width=True)
         else:
             st.info("No supporter type data found.")
 
@@ -645,9 +716,40 @@ with tab3:
         MATCH (p:Person)
         RETURN coalesce(p.gender,'Unspecified') AS gender, count(p) AS count
         """, silent=True)
-        if not df_gender.empty:
-            st.markdown("**Gender Distribution**")
-            st.bar_chart(df_gender.set_index("gender"))
+
+        df_type_gender = run_query("""
+        MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
+        RETURN st.name AS type, coalesce(p.gender,'Unspecified') AS gender, count(p) AS count
+        """, silent=True)
+
+        gender_cols = st.columns(2)
+        with gender_cols[0]:
+            if not df_gender.empty:
+                st.markdown("**Gender Distribution (Share)**")
+                gender_pie = (
+                    alt.Chart(df_gender)
+                    .mark_arc(innerRadius=45)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("gender:N"),
+                        tooltip=["gender:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(gender_pie, use_container_width=True)
+        with gender_cols[1]:
+            if not df_type_gender.empty:
+                st.markdown("**Gender by Supporter Type**")
+                gender_stack = (
+                    alt.Chart(df_type_gender)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("type:N", title="Supporter Type"),
+                        y=alt.Y("count:Q"),
+                        color=alt.Color("gender:N"),
+                        tooltip=["type:N", "gender:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(gender_stack, use_container_width=True)
 
         df_time = run_query("""
         MATCH (p:Person)
@@ -655,45 +757,57 @@ with tab3:
         """, silent=True)
         if not df_time.empty:
             st.markdown("**Time Availability**")
-            st.bar_chart(df_time.set_index("availability"))
+            time_bar = (
+                alt.Chart(df_time)
+                .mark_bar()
+                .encode(
+                    y=alt.Y("availability:N", sort="-x"),
+                    x=alt.X("count:Q"),
+                    tooltip=["availability:N", "count:Q"],
+                )
+            )
+            st.altair_chart(time_bar, use_container_width=True)
 
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            df_manifesto = run_query("""
-            MATCH (p:Person)
-            RETURN CASE
-                WHEN p.agreesWithManifesto IS NULL THEN 'Unspecified'
-                WHEN p.agreesWithManifesto THEN 'Yes'
-                ELSE 'No'
-            END AS agrees, count(p) AS count
-            """, silent=True)
+        indicator_cols = st.columns(3)
+        with indicator_cols[0]:
             if not df_manifesto.empty:
                 st.markdown("**Agrees With Manifesto**")
-                st.bar_chart(df_manifesto.set_index("agrees"))
-        with col_b:
-            df_membership = run_query("""
-            MATCH (p:Person)
-            RETURN CASE
-                WHEN p.interestedInMembership IS NULL THEN 'Unspecified'
-                WHEN p.interestedInMembership THEN 'Yes'
-                ELSE 'No'
-            END AS interested, count(p) AS count
-            """, silent=True)
+                manifesto_chart = (
+                    alt.Chart(df_manifesto)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("agrees:N"),
+                        tooltip=["agrees:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(manifesto_chart, use_container_width=True)
+        with indicator_cols[1]:
             if not df_membership.empty:
                 st.markdown("**Interested in Party Membership**")
-                st.bar_chart(df_membership.set_index("interested"))
-        with col_c:
-            df_facebook = run_query("""
-            MATCH (p:Person)
-            RETURN CASE
-                WHEN p.facebookGroupMember IS NULL THEN 'Unspecified'
-                WHEN p.facebookGroupMember THEN 'Yes'
-                ELSE 'No'
-            END AS facebook, count(p) AS count
-            """, silent=True)
+                membership_chart = (
+                    alt.Chart(df_membership)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("interested:N"),
+                        tooltip=["interested:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(membership_chart, use_container_width=True)
+        with indicator_cols[2]:
             if not df_facebook.empty:
                 st.markdown("**Facebook Group Member**")
-                st.bar_chart(df_facebook.set_index("facebook"))
+                facebook_chart = (
+                    alt.Chart(df_facebook)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("facebook:N"),
+                        tooltip=["facebook:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(facebook_chart, use_container_width=True)
 
         df_age = run_query("""
         MATCH (p:Person)
@@ -704,16 +818,17 @@ with tab3:
             ages = pd.to_numeric(df_age["age"], errors="coerce")
             ages = ages[ages > 0]
             if not ages.empty:
-                bins = [0, 17, 25, 35, 45, 55, 65, 120]
-                labels = ["0-17", "18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
-                age_bins = pd.cut(ages, bins=bins, labels=labels, include_lowest=True)
-                age_counts = (
-                    age_bins.value_counts()
-                    .rename_axis("age_band")
-                    .reset_index(name="count")
-                )
                 st.markdown("**Age Distribution**")
-                st.bar_chart(age_counts.set_index("age_band"))
+                age_chart = (
+                    alt.Chart(pd.DataFrame({"age": ages}))
+                    .mark_area(opacity=0.4, line={"color": "#6b6b6b"})
+                    .encode(
+                        x=alt.X("age:Q", bin=alt.Bin(maxbins=12), title="Age"),
+                        y=alt.Y("count():Q", title="Supporters"),
+                        tooltip=["count():Q"],
+                    )
+                )
+                st.altair_chart(age_chart, use_container_width=True)
 
         top_cols = st.columns(2)
         with top_cols[0]:
@@ -725,7 +840,16 @@ with tab3:
             """, silent=True)
             if not df_involve.empty:
                 st.markdown("**Top Involvement Areas**")
-                st.bar_chart(df_involve.set_index("area"))
+                involve_bar = (
+                    alt.Chart(df_involve)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("area:N", sort="-x"),
+                        x=alt.X("count:Q"),
+                        tooltip=["area:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(involve_bar, use_container_width=True)
         with top_cols[1]:
             df_skills = run_query("""
             MATCH (p:Person)-[:CAN_CONTRIBUTE_WITH]->(s:Skill)
@@ -735,7 +859,16 @@ with tab3:
             """, silent=True)
             if not df_skills.empty:
                 st.markdown("**Top Skills**")
-                st.bar_chart(df_skills.set_index("skill"))
+                skill_bar = (
+                    alt.Chart(df_skills)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("skill:N", sort="-x"),
+                        x=alt.X("count:Q"),
+                        tooltip=["skill:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(skill_bar, use_container_width=True)
 
 # ----------------------------------
 # Tab 4 — Chatbot
