@@ -613,7 +613,7 @@ with tab2:
                 view_state = pdk.ViewState(
                     latitude=df_geo["lat"].mean(),
                     longitude=df_geo["lon"].mean(),
-                    zoom=9,
+                    zoom=12,
                     pitch=20
                 )
                 deck = pdk.Deck(
