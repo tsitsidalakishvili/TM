@@ -649,6 +649,94 @@ with tab3:
             st.markdown("**Gender Distribution**")
             st.bar_chart(df_gender.set_index("gender"))
 
+        df_time = run_query("""
+        MATCH (p:Person)
+        RETURN coalesce(p.timeAvailability,'Unspecified') AS availability, count(p) AS count
+        """, silent=True)
+        if not df_time.empty:
+            st.markdown("**Time Availability**")
+            st.bar_chart(df_time.set_index("availability"))
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            df_manifesto = run_query("""
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.agreesWithManifesto IS NULL THEN 'Unspecified'
+                WHEN p.agreesWithManifesto THEN 'Yes'
+                ELSE 'No'
+            END AS agrees, count(p) AS count
+            """, silent=True)
+            if not df_manifesto.empty:
+                st.markdown("**Agrees With Manifesto**")
+                st.bar_chart(df_manifesto.set_index("agrees"))
+        with col_b:
+            df_membership = run_query("""
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.interestedInMembership IS NULL THEN 'Unspecified'
+                WHEN p.interestedInMembership THEN 'Yes'
+                ELSE 'No'
+            END AS interested, count(p) AS count
+            """, silent=True)
+            if not df_membership.empty:
+                st.markdown("**Interested in Party Membership**")
+                st.bar_chart(df_membership.set_index("interested"))
+        with col_c:
+            df_facebook = run_query("""
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.facebookGroupMember IS NULL THEN 'Unspecified'
+                WHEN p.facebookGroupMember THEN 'Yes'
+                ELSE 'No'
+            END AS facebook, count(p) AS count
+            """, silent=True)
+            if not df_facebook.empty:
+                st.markdown("**Facebook Group Member**")
+                st.bar_chart(df_facebook.set_index("facebook"))
+
+        df_age = run_query("""
+        MATCH (p:Person)
+        WHERE p.age IS NOT NULL
+        RETURN p.age AS age
+        """, silent=True)
+        if not df_age.empty:
+            ages = pd.to_numeric(df_age["age"], errors="coerce")
+            ages = ages[ages > 0]
+            if not ages.empty:
+                bins = [0, 17, 25, 35, 45, 55, 65, 120]
+                labels = ["0-17", "18-25", "26-35", "36-45", "46-55", "56-65", "66+"]
+                age_bins = pd.cut(ages, bins=bins, labels=labels, include_lowest=True)
+                age_counts = (
+                    age_bins.value_counts()
+                    .rename_axis("age_band")
+                    .reset_index(name="count")
+                )
+                st.markdown("**Age Distribution**")
+                st.bar_chart(age_counts.set_index("age_band"))
+
+        top_cols = st.columns(2)
+        with top_cols[0]:
+            df_involve = run_query("""
+            MATCH (p:Person)-[:INTERESTED_IN]->(ia:InvolvementArea)
+            RETURN ia.name AS area, count(p) AS count
+            ORDER BY count DESC
+            LIMIT 10
+            """, silent=True)
+            if not df_involve.empty:
+                st.markdown("**Top Involvement Areas**")
+                st.bar_chart(df_involve.set_index("area"))
+        with top_cols[1]:
+            df_skills = run_query("""
+            MATCH (p:Person)-[:CAN_CONTRIBUTE_WITH]->(s:Skill)
+            RETURN s.name AS skill, count(p) AS count
+            ORDER BY count DESC
+            LIMIT 10
+            """, silent=True)
+            if not df_skills.empty:
+                st.markdown("**Top Skills**")
+                st.bar_chart(df_skills.set_index("skill"))
+
 # ----------------------------------
 # Tab 4 — Chatbot
 # ----------------------------------
@@ -656,21 +744,76 @@ with tab4:
     st.subheader("Chatbot (stub)")
     st.info("Ask graph questions; this stub executes a simple match on supporter type keywords.")
     q = st.text_input("Question", placeholder="e.g., Show interested supporters")
+    def render_results_header(title="Results"):
+        header_cols = st.columns([3, 1])
+        with header_cols[0]:
+            st.markdown(f"**{title}**")
+        with header_cols[1]:
+            st.caption("In progress")
+
     if st.button("Ask"):
         if not q.strip():
             st.warning("Enter a question.")
         else:
-            if "interested" in q.lower():
+            q_lower = q.lower()
+            if "gender" in q_lower and "interested" in q_lower:
                 df_q = run_query("""
                 MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
                 WHERE toLower(st.name) CONTAINS 'interested'
-                RETURN p.firstName AS firstName, p.lastName AS lastName, p.email AS email, st.name AS type
+                RETURN p.firstName AS firstName, p.lastName AS lastName, p.email AS email,
+                       st.name AS type, coalesce(p.gender, 'Unspecified') AS gender
+                LIMIT 200
+                """, silent=True)
+                if df_q.empty:
+                    st.info("No matching supporters found.")
+                else:
+                    render_results_header("Results")
+                    st.dataframe(df_q)
+                    st.markdown("**Gender ratio among interested**")
+                    gender_counts = (
+                        df_q["gender"]
+                        .value_counts(dropna=False)
+                        .rename_axis("gender")
+                        .reset_index(name="count")
+                    )
+                    gender_counts["ratio"] = (
+                        gender_counts["count"] / gender_counts["count"].sum()
+                    ).round(3)
+                    st.bar_chart(gender_counts.set_index("gender")["count"])
+                    st.dataframe(gender_counts)
+            elif "interested" in q_lower:
+                df_q = run_query("""
+                MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
+                WHERE toLower(st.name) CONTAINS 'interested'
+                RETURN p.firstName AS firstName, p.lastName AS lastName, p.email AS email,
+                       st.name AS type, coalesce(p.gender, 'Unspecified') AS gender
                 LIMIT 50
                 """, silent=True)
                 if df_q.empty:
                     st.info("No matching supporters found.")
                 else:
+                    render_results_header("Results")
                     st.dataframe(df_q)
+                    st.markdown("**Charts**")
+                    chart_cols = st.columns(2)
+                    with chart_cols[0]:
+                        if "type" in df_q.columns:
+                            type_counts = (
+                                df_q["type"]
+                                .value_counts(dropna=False)
+                                .rename_axis("type")
+                                .reset_index(name="count")
+                            )
+                            st.bar_chart(type_counts.set_index("type"))
+                    with chart_cols[1]:
+                        if "gender" in df_q.columns:
+                            gender_counts = (
+                                df_q["gender"]
+                                .value_counts(dropna=False)
+                                .rename_axis("gender")
+                                .reset_index(name="count")
+                            )
+                            st.bar_chart(gender_counts.set_index("gender"))
             else:
                 st.info("No intent matched; try mentioning 'interested'.")
 
