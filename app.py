@@ -2506,3 +2506,4 @@ with tab_cleanup:
     if st.button("🧹 DELETE ALL DATA (DANGEROUS)"):
         run_write("MATCH (n) DETACH DELETE n")
         st.warning("Database cleared")
+
