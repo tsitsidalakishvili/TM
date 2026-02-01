@@ -10,3 +10,5 @@ matplotlib-venn
 upsetplot
 geopy
 pyvis
+fastapi
+uvicorn
