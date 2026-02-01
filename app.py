@@ -311,7 +311,6 @@ st.set_page_config(
 )
 
 st.title("🟣 Freedom Square – Supporter Graph CRM")
-st.caption("Graph-based supporter management with explainable analytics")
 st.session_state.setdefault("nation_slug", NATION_SLUG)
 
 tab_dashboard, tab_form, tab_supporters, tab_import, tab_relationships, tab_activities, tab_events, tab_contributions, tab_goals, tab_comms, tab_finance, tab_maps, tab_analytics, tab_settings, tab_schema, tab_chatbot, tab_cleanup = st.tabs([
