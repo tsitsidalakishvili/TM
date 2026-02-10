@@ -847,6 +847,236 @@ with tab_intro:
         )
         st.dataframe(effort_stats, use_container_width=True)
 
+        st.markdown("### Engagement analytics")
+        df_total = run_query(
+            """
+            MATCH (p:Person)
+            RETURN count(p) AS total
+            """,
+            silent=True,
+        )
+        total_people = int(df_total["total"].iloc[0]) if not df_total.empty else 0
+
+        df_manifesto = run_query(
+            """
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.agreesWithManifesto IS NULL THEN 'Unspecified'
+                WHEN p.agreesWithManifesto THEN 'Yes'
+                ELSE 'No'
+            END AS agrees, count(p) AS count
+            """,
+            silent=True,
+        )
+        df_membership = run_query(
+            """
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.interestedInMembership IS NULL THEN 'Unspecified'
+                WHEN p.interestedInMembership THEN 'Yes'
+                ELSE 'No'
+            END AS interested, count(p) AS count
+            """,
+            silent=True,
+        )
+        df_facebook = run_query(
+            """
+            MATCH (p:Person)
+            RETURN CASE
+                WHEN p.facebookGroupMember IS NULL THEN 'Unspecified'
+                WHEN p.facebookGroupMember THEN 'Yes'
+                ELSE 'No'
+            END AS facebook, count(p) AS count
+            """,
+            silent=True,
+        )
+
+        manifesto_yes = (
+            int(df_manifesto.loc[df_manifesto["agrees"] == "Yes", "count"].sum())
+            if not df_manifesto.empty
+            else 0
+        )
+        membership_yes = (
+            int(df_membership.loc[df_membership["interested"] == "Yes", "count"].sum())
+            if not df_membership.empty
+            else 0
+        )
+        facebook_yes = (
+            int(df_facebook.loc[df_facebook["facebook"] == "Yes", "count"].sum())
+            if not df_facebook.empty
+            else 0
+        )
+        manifesto_pct = (manifesto_yes / total_people * 100) if total_people else 0
+        membership_pct = (membership_yes / total_people * 100) if total_people else 0
+        facebook_pct = (facebook_yes / total_people * 100) if total_people else 0
+
+        indicator_metrics = st.columns(3)
+        indicator_metrics[0].metric("Manifesto Agree (%)", f"{manifesto_pct:.1f}%")
+        indicator_metrics[1].metric("Membership Interest (%)", f"{membership_pct:.1f}%")
+        indicator_metrics[2].metric("Facebook Group Member (%)", f"{facebook_pct:.1f}%")
+
+        df_types = run_query(
+            """
+            MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
+            RETURN st.name AS type, count(p) AS count
+            """,
+            silent=True,
+        )
+        if not df_types.empty:
+            type_cols = st.columns(2)
+            with type_cols[0]:
+                st.markdown("**Supporters by Type (Share)**")
+                type_share = (
+                    alt.Chart(df_types)
+                    .mark_arc(innerRadius=55)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("type:N"),
+                        tooltip=["type:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(type_share, use_container_width=True)
+            with type_cols[1]:
+                st.markdown("**Supporters by Type (Counts)**")
+                type_bar = (
+                    alt.Chart(df_types)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("type:N", sort="-y"),
+                        y=alt.Y("count:Q"),
+                        tooltip=["type:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(type_bar, use_container_width=True)
+
+        df_type_gender = run_query(
+            """
+            MATCH (p:Person)-[:CLASSIFIED_AS]->(st:SupporterType)
+            RETURN st.name AS type, coalesce(p.gender,'Unspecified') AS gender, count(p) AS count
+            """,
+            silent=True,
+        )
+        if not df_type_gender.empty:
+            st.markdown("**Gender by Supporter Type**")
+            gender_stack = (
+                alt.Chart(df_type_gender)
+                .mark_bar()
+                .encode(
+                    x=alt.X("type:N", title="Supporter Type"),
+                    y=alt.Y("count:Q"),
+                    color=alt.Color("gender:N"),
+                    tooltip=["type:N", "gender:N", "count:Q"],
+                )
+            )
+            st.altair_chart(gender_stack, use_container_width=True)
+
+        df_time = run_query(
+            """
+            MATCH (p:Person)
+            RETURN coalesce(p.timeAvailability,'Unspecified') AS availability, count(p) AS count
+            """,
+            silent=True,
+        )
+        if not df_time.empty:
+            st.markdown("**Time Availability**")
+            time_bar = (
+                alt.Chart(df_time)
+                .mark_bar()
+                .encode(
+                    y=alt.Y("availability:N", sort="-x"),
+                    x=alt.X("count:Q"),
+                    tooltip=["availability:N", "count:Q"],
+                )
+            )
+            st.altair_chart(time_bar, use_container_width=True)
+
+        indicator_cols = st.columns(3)
+        with indicator_cols[0]:
+            if not df_manifesto.empty:
+                st.markdown("**Agrees With Manifesto**")
+                manifesto_chart = (
+                    alt.Chart(df_manifesto)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("agrees:N"),
+                        tooltip=["agrees:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(manifesto_chart, use_container_width=True)
+        with indicator_cols[1]:
+            if not df_membership.empty:
+                st.markdown("**Interested in Party Membership**")
+                membership_chart = (
+                    alt.Chart(df_membership)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("interested:N"),
+                        tooltip=["interested:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(membership_chart, use_container_width=True)
+        with indicator_cols[2]:
+            if not df_facebook.empty:
+                st.markdown("**Facebook Group Member**")
+                facebook_chart = (
+                    alt.Chart(df_facebook)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("count:Q"),
+                        color=alt.Color("facebook:N"),
+                        tooltip=["facebook:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(facebook_chart, use_container_width=True)
+
+        top_cols = st.columns(2)
+        with top_cols[0]:
+            df_involve = run_query(
+                """
+                MATCH (p:Person)-[:INTERESTED_IN]->(ia:InvolvementArea)
+                RETURN ia.name AS area, count(p) AS count
+                ORDER BY count DESC
+                LIMIT 10
+                """,
+                silent=True,
+            )
+            if not df_involve.empty:
+                st.markdown("**Top Involvement Areas**")
+                involve_bar = (
+                    alt.Chart(df_involve)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("area:N", sort="-x"),
+                        x=alt.X("count:Q"),
+                        tooltip=["area:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(involve_bar, use_container_width=True)
+        with top_cols[1]:
+            df_skills = run_query(
+                """
+                MATCH (p:Person)-[:CAN_CONTRIBUTE_WITH]->(s:Skill)
+                RETURN s.name AS skill, count(p) AS count
+                ORDER BY count DESC
+                LIMIT 10
+                """,
+                silent=True,
+            )
+            if not df_skills.empty:
+                st.markdown("**Top Skills**")
+                skill_bar = (
+                    alt.Chart(df_skills)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("skill:N", sort="-x"),
+                        x=alt.X("count:Q"),
+                        tooltip=["skill:N", "count:Q"],
+                    )
+                )
+                st.altair_chart(skill_bar, use_container_width=True)
+
     st.markdown("---")
     st.subheader("Chatbox")
     st.caption("Ask about supporters, members, gender, age, or top joiners.")
