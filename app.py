@@ -175,6 +175,15 @@ def split_list(value):
     return cleaned
 
 
+def normalize_str_list(values):
+    cleaned = []
+    for value in values or []:
+        text = clean_text(value)
+        if text:
+            cleaned.append(text)
+    return sorted(set(cleaned))
+
+
 def format_list_label(values, limit=6):
     items = [str(v).strip() for v in values or [] if str(v).strip()]
     items = sorted(set(items))
@@ -298,6 +307,21 @@ def nominatim_search(query, limit=5):
     except Exception:
         return []
     return []
+
+
+def get_distinct_values(label, prop="name"):
+    if driver is None:
+        return []
+    query = f"""
+    MATCH (n:{label})
+    WHERE n.{prop} IS NOT NULL
+    RETURN DISTINCT n.{prop} AS value
+    ORDER BY value
+    """
+    df = run_query(query, silent=True)
+    if df.empty or "value" not in df.columns:
+        return []
+    return [str(v) for v in df["value"].dropna().tolist() if str(v).strip()]
 
 
 def bulk_upsert_people(rows):
@@ -646,12 +670,12 @@ if driver is None:
     st.stop()
 
 tab_intro, tab_supporters, tab_members, tab_map, tab_import = st.tabs(
-    ["Introduction", "Supporters", "Members", "Map", "Import/Export"]
+    ["Dashboard", "Supporters", "Members", "Map", "Import/Export"]
 )
 
 
 with tab_intro:
-    st.subheader("Introduction")
+    st.subheader("Dashboard")
     st.write("Short CRM view focused on supporters, members, activity, and map insights.")
     df_summary = load_supporter_summary()
     if df_summary.empty:
@@ -794,70 +818,231 @@ with tab_supporters:
             idx = labels.index(selected_label)
             selected = options[idx]
             st.session_state["supporter_address_value"] = selected.get("display_name")
-            st.session_state["supporter_lat_value"] = selected.get("lat")
-            st.session_state["supporter_lon_value"] = selected.get("lon")
+            st.session_state["supporter_lat_value"] = float(selected.get("lat"))
+            st.session_state["supporter_lon_value"] = float(selected.get("lon"))
+            st.session_state["supporter_address"] = selected.get("display_name")
+            st.session_state["supporter_lat"] = float(selected.get("lat"))
+            st.session_state["supporter_lon"] = float(selected.get("lon"))
 
         st.markdown("**New supporter**")
-        with st.form("new_supporter_form"):
-            email = st.text_input("Email *", key="supporter_email")
-            name_cols = st.columns(2)
-            first_name = name_cols[0].text_input("First name", key="supporter_first")
-            last_name = name_cols[1].text_input("Last name", key="supporter_last")
-            gender = st.selectbox(
-                "Gender", ["Unspecified", "Female", "Male", "Other"], key="supporter_gender"
-            )
-            age = st.number_input(
-                "Age", min_value=0, max_value=120, value=0, step=1, key="supporter_age"
-            )
-            phone = st.text_input("Phone", key="supporter_phone")
-            effort_hours = st.number_input(
-                "Effort hours", min_value=0.0, value=0.0, step=1.0, key="supporter_effort"
-            )
-            address = st.text_input(
-                "Address",
-                value=st.session_state.get("supporter_address_value", ""),
-                key="supporter_address",
-            )
-            lat_text = st.text_input(
-                "Latitude",
-                value=str(st.session_state.get("supporter_lat_value", "") or ""),
-                key="supporter_lat",
-            )
-            lon_text = st.text_input(
-                "Longitude",
-                value=str(st.session_state.get("supporter_lon_value", "") or ""),
-                key="supporter_lon",
-            )
-            submit = st.form_submit_button("Save supporter")
+        default_areas = [
+            "Field Organizing",
+            "Events",
+            "Fundraising",
+            "Communications",
+            "Tech",
+            "Policy",
+        ]
+        default_skills = [
+            "Communication",
+            "Fundraising",
+            "Data",
+            "Design",
+            "Engineering",
+            "Organizing",
+        ]
+        supporter_types = ["Supporter"]
+        existing_tags = get_distinct_values("Tag")
 
-        if submit:
-            cleaned_email = clean_text(email)
-            if not cleaned_email:
-                st.error("Email is required.")
-            else:
-                try:
-                    lat = float(lat_text) if clean_text(lat_text) else None
-                    lon = float(lon_text) if clean_text(lon_text) else None
-                except ValueError:
-                    st.error("Latitude and longitude must be numbers.")
-                    lat = lon = None
+        with st.form("supporter_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                first_name = st.text_input("First Name")
+                email = st.text_input("Email")
+                phone = st.text_input("Phone", value="")
+                effort_hours = st.number_input(
+                    "Effort hours", min_value=0.0, value=0.0, step=1.0
+                )
+                gender = st.selectbox("Gender", ["", "Male", "Female", "Other"])
+                age = st.number_input("Age", min_value=0, max_value=120, value=0, step=1)
+                supporter_type = st.selectbox(
+                    "Supporter Type", supporter_types, index=0
+                )
+                time_availability = st.selectbox(
+                    "Time Availability",
+                    ["", "Weekends", "Evenings", "Full-time", "Ad-hoc"],
+                )
+                agrees = st.checkbox("Agrees with Manifesto", value=False)
+                interested_membership = st.checkbox(
+                    "Interested in Party Membership", value=False
+                )
+                facebook_member = st.checkbox("Facebook Group Member", value=False)
+                referrer_email = st.text_input("Referred By (email)", value="")
+            with col_b:
+                last_name = st.text_input("Last Name")
+                address = st.text_input(
+                    "Address",
+                    value=st.session_state.get("supporter_address_value", ""),
+                    key="supporter_address",
+                )
+                latitude = st.number_input(
+                    "Latitude",
+                    value=float(st.session_state.get("supporter_lat_value", 0.0) or 0.0),
+                    format="%.6f",
+                    key="supporter_lat",
+                )
+                longitude = st.number_input(
+                    "Longitude",
+                    value=float(st.session_state.get("supporter_lon_value", 0.0) or 0.0),
+                    format="%.6f",
+                    key="supporter_lon",
+                )
+                involvement = st.multiselect(
+                    "Preferred Areas of Involvement", default_areas, default=[]
+                )
+                skills_sel = st.multiselect("Skills", default_skills, default=[])
+                donation_total = st.number_input(
+                    "Donation Total (optional)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=10.0,
+                )
+                tags_selected = st.multiselect(
+                    "Tags (existing)", existing_tags, default=[]
+                )
+                tags_custom = st.text_input("Add tags (comma separated)")
+            tags_combined = normalize_str_list(tags_selected + split_list(tags_custom))
+            about = st.text_area("About / Motivation", value="")
+
+            save = st.form_submit_button("💾 Save to Neo4j and preview")
+
+            if save:
+                row = {
+                    "First Name": first_name,
+                    "Last Name": last_name,
+                    "Email": email,
+                    "Phone": phone,
+                    "Address": address,
+                    "Latitude": latitude if latitude != 0.0 else None,
+                    "Longitude": longitude if longitude != 0.0 else None,
+                    "Gender": gender,
+                    "Age": age if age else None,
+                    "About You / Motivation": about,
+                    "Time Availability": time_availability,
+                    "Agrees with Manifesto": "Yes" if agrees else "No",
+                    "Interested in Party Membership": "Yes"
+                    if interested_membership
+                    else "No",
+                    "Facebook Group Member": "Yes" if facebook_member else "No",
+                    "Supporter Type": supporter_type,
+                    "Preferred Areas of Involvement": ", ".join(involvement),
+                    "How You Can Help": ", ".join(skills_sel),
+                    "Tags": ", ".join(tags_combined),
+                    "Referred By Email": referrer_email,
+                    "Effort Hours": effort_hours if effort_hours else None,
+                    "Donation Total": donation_total if donation_total else None,
+                }
+                st.success("Preview new supporter")
+                st.dataframe(pd.DataFrame([row]))
+
+                if driver is None:
+                    st.error("Neo4j driver not available. Check connection settings.")
+                elif not email.strip():
+                    st.error("Email is required to upsert the supporter.")
                 else:
-                    payload = {
-                        "email": cleaned_email,
-                        "firstName": clean_text(first_name),
-                        "lastName": clean_text(last_name),
-                        "gender": None if gender == "Unspecified" else gender,
-                        "age": int(age) if age > 0 else None,
-                        "phone": clean_text(phone),
-                        "effortHours": float(effort_hours) if effort_hours > 0 else None,
-                        "eventsAttendedCount": None,
-                        "referralCount": None,
-                        "lat": lat,
-                        "lon": lon,
-                        "address": clean_text(address),
-                        "supporterType": "Supporter",
-                    }
-                    if upsert_person(payload):
+                    lat_val = latitude if latitude not in [0.0, None] else None
+                    lon_val = longitude if longitude not in [0.0, None] else None
+
+                    ok = run_write(
+                        """
+                        MERGE (p:Person {email: $email})
+                        ON CREATE SET
+                          p.personId = randomUUID(),
+                          p.createdAt = datetime(),
+                          p.firstName = $firstName,
+                          p.lastName = $lastName,
+                          p.phone = $phone,
+                          p.gender = $gender,
+                          p.age = $age,
+                          p.about = $about,
+                          p.timeAvailability = $timeAvailability,
+                          p.agreesWithManifesto = $agreesWithManifesto,
+                          p.interestedInMembership = $interestedInMembership,
+                          p.facebookGroupMember = $facebookGroupMember,
+                          p.lat = $lat,
+                          p.lon = $lon,
+                          p.effortHours = $effortHours,
+                          p.donationTotal = $donationTotal
+                        ON MATCH SET
+                          p.firstName = coalesce($firstName, p.firstName),
+                          p.lastName = coalesce($lastName, p.lastName),
+                          p.phone = coalesce($phone, p.phone),
+                          p.gender = coalesce($gender, p.gender),
+                          p.age = coalesce($age, p.age),
+                          p.about = coalesce($about, p.about),
+                          p.timeAvailability = coalesce($timeAvailability, p.timeAvailability),
+                          p.agreesWithManifesto = coalesce($agreesWithManifesto, p.agreesWithManifesto),
+                          p.interestedInMembership = coalesce($interestedInMembership, p.interestedInMembership),
+                          p.facebookGroupMember = coalesce($facebookGroupMember, p.facebookGroupMember),
+                          p.lat = coalesce($lat, p.lat),
+                          p.lon = coalesce($lon, p.lon),
+                          p.effortHours = coalesce($effortHours, p.effortHours),
+                          p.donationTotal = coalesce($donationTotal, p.donationTotal)
+
+                        WITH p
+                        FOREACH (_ IN CASE WHEN $address IS NULL OR $address = '' THEN [] ELSE [1] END |
+                          MERGE (a:Address {fullAddress: $address})
+                          ON CREATE SET
+                            a.latitude = $lat,
+                            a.longitude = $lon
+                          ON MATCH SET
+                            a.latitude = coalesce($lat, a.latitude),
+                            a.longitude = coalesce($lon, a.longitude)
+                          MERGE (p)-[:LIVES_AT]->(a)
+                        )
+
+                        MERGE (st:SupporterType {name: $supporterType})
+                        MERGE (p)-[:CLASSIFIED_AS]->(st)
+
+                        FOREACH (area IN $involvementAreas |
+                          MERGE (ia:InvolvementArea {name: area})
+                          MERGE (p)-[:INTERESTED_IN]->(ia)
+                        )
+
+                        FOREACH (skill IN $skills |
+                          MERGE (sk:Skill {name: skill})
+                          MERGE (p)-[:CAN_CONTRIBUTE_WITH]->(sk)
+                        )
+
+                        FOREACH (tag IN $tags |
+                          MERGE (t:Tag {name: tag})
+                          MERGE (p)-[:HAS_TAG]->(t)
+                        )
+
+                        FOREACH (_ IN CASE
+                          WHEN $referrerEmail IS NULL OR $referrerEmail = '' OR $referrerEmail = $email THEN []
+                          ELSE [1]
+                        END |
+                          MERGE (ref:Person {email: $referrerEmail})
+                          ON CREATE SET ref.personId = randomUUID()
+                          MERGE (p)-[:REFERRED_BY]->(ref)
+                        )
+                        """,
+                        {
+                            "email": clean_text(email),
+                            "firstName": clean_text(first_name),
+                            "lastName": clean_text(last_name),
+                            "phone": clean_text(phone),
+                            "gender": clean_text(gender),
+                            "age": age if age else None,
+                            "about": clean_text(about),
+                            "timeAvailability": clean_text(time_availability),
+                            "agreesWithManifesto": agrees,
+                            "interestedInMembership": interested_membership,
+                            "facebookGroupMember": facebook_member,
+                            "supporterType": clean_text(supporter_type) or "Supporter",
+                            "lat": lat_val,
+                            "lon": lon_val,
+                            "effortHours": effort_hours if effort_hours else None,
+                            "donationTotal": donation_total if donation_total else None,
+                            "address": clean_text(address),
+                            "involvementAreas": involvement,
+                            "skills": skills_sel,
+                            "tags": tags_combined,
+                            "referrerEmail": clean_text(referrer_email),
+                        },
+                    )
+                    if ok:
                         load_supporter_summary.clear()
                         load_map_data.clear()
                         st.success("Supporter saved.")
@@ -933,66 +1118,241 @@ with tab_members:
             st.session_state["member_lon_value"] = selected.get("lon")
 
         st.markdown("**New member**")
-        with st.form("new_member_form"):
-            email = st.text_input("Email *", key="member_email")
-            name_cols = st.columns(2)
-            first_name = name_cols[0].text_input("First name", key="member_first")
-            last_name = name_cols[1].text_input("Last name", key="member_last")
-            gender = st.selectbox(
-                "Gender", ["Unspecified", "Female", "Male", "Other"], key="member_gender"
-            )
-            age = st.number_input(
-                "Age", min_value=0, max_value=120, value=0, step=1, key="member_age"
-            )
-            phone = st.text_input("Phone", key="member_phone")
-            effort_hours = st.number_input(
-                "Effort hours", min_value=0.0, value=0.0, step=1.0, key="member_effort"
-            )
-            address = st.text_input(
-                "Address",
-                value=st.session_state.get("member_address_value", ""),
-                key="member_address",
-            )
-            lat_text = st.text_input(
-                "Latitude",
-                value=str(st.session_state.get("member_lat_value", "") or ""),
-                key="member_lat",
-            )
-            lon_text = st.text_input(
-                "Longitude",
-                value=str(st.session_state.get("member_lon_value", "") or ""),
-                key="member_lon",
-            )
-            submit = st.form_submit_button("Save member")
+        default_areas = [
+            "Field Organizing",
+            "Events",
+            "Fundraising",
+            "Communications",
+            "Tech",
+            "Policy",
+        ]
+        default_skills = [
+            "Communication",
+            "Fundraising",
+            "Data",
+            "Design",
+            "Engineering",
+            "Organizing",
+        ]
+        member_types = ["Member"]
+        existing_tags = get_distinct_values("Tag")
 
-        if submit:
-            cleaned_email = clean_text(email)
-            if not cleaned_email:
-                st.error("Email is required.")
-            else:
-                try:
-                    lat = float(lat_text) if clean_text(lat_text) else None
-                    lon = float(lon_text) if clean_text(lon_text) else None
-                except ValueError:
-                    st.error("Latitude and longitude must be numbers.")
-                    lat = lon = None
+        with st.form("member_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                first_name = st.text_input("First Name", key="member_first_name")
+                email = st.text_input("Email", key="member_email")
+                phone = st.text_input("Phone", value="", key="member_phone")
+                effort_hours = st.number_input(
+                    "Effort hours", min_value=0.0, value=0.0, step=1.0, key="member_effort"
+                )
+                gender = st.selectbox(
+                    "Gender", ["", "Male", "Female", "Other"], key="member_gender"
+                )
+                age = st.number_input(
+                    "Age", min_value=0, max_value=120, value=0, step=1, key="member_age"
+                )
+                member_type = st.selectbox(
+                    "Member Type", member_types, index=0, key="member_type"
+                )
+                time_availability = st.selectbox(
+                    "Time Availability",
+                    ["", "Weekends", "Evenings", "Full-time", "Ad-hoc"],
+                    key="member_time_availability",
+                )
+                agrees = st.checkbox("Agrees with Manifesto", value=False, key="member_agrees")
+                interested_membership = st.checkbox(
+                    "Interested in Party Membership", value=False, key="member_interested"
+                )
+                facebook_member = st.checkbox(
+                    "Facebook Group Member", value=False, key="member_fb"
+                )
+                referrer_email = st.text_input(
+                    "Referred By (email)", value="", key="member_referrer"
+                )
+            with col_b:
+                last_name = st.text_input("Last Name", key="member_last_name")
+                address = st.text_input(
+                    "Address",
+                    value=st.session_state.get("member_address_value", ""),
+                    key="member_address",
+                )
+                latitude = st.number_input(
+                    "Latitude",
+                    value=float(st.session_state.get("member_lat_value", 0.0) or 0.0),
+                    format="%.6f",
+                    key="member_lat",
+                )
+                longitude = st.number_input(
+                    "Longitude",
+                    value=float(st.session_state.get("member_lon_value", 0.0) or 0.0),
+                    format="%.6f",
+                    key="member_lon",
+                )
+                involvement = st.multiselect(
+                    "Preferred Areas of Involvement",
+                    default_areas,
+                    default=[],
+                    key="member_involvement",
+                )
+                skills_sel = st.multiselect(
+                    "Skills", default_skills, default=[], key="member_skills"
+                )
+                donation_total = st.number_input(
+                    "Donation Total (optional)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=10.0,
+                    key="member_donation",
+                )
+                tags_selected = st.multiselect(
+                    "Tags (existing)", existing_tags, default=[], key="member_tags"
+                )
+                tags_custom = st.text_input(
+                    "Add tags (comma separated)", key="member_tags_custom"
+                )
+            tags_combined = normalize_str_list(tags_selected + split_list(tags_custom))
+            about = st.text_area("About / Motivation", value="", key="member_about")
+
+            save = st.form_submit_button("💾 Save to Neo4j and preview")
+
+            if save:
+                row = {
+                    "First Name": first_name,
+                    "Last Name": last_name,
+                    "Email": email,
+                    "Phone": phone,
+                    "Address": address,
+                    "Latitude": latitude if latitude != 0.0 else None,
+                    "Longitude": longitude if longitude != 0.0 else None,
+                    "Gender": gender,
+                    "Age": age if age else None,
+                    "About You / Motivation": about,
+                    "Time Availability": time_availability,
+                    "Agrees with Manifesto": "Yes" if agrees else "No",
+                    "Interested in Party Membership": "Yes"
+                    if interested_membership
+                    else "No",
+                    "Facebook Group Member": "Yes" if facebook_member else "No",
+                    "Member Type": member_type,
+                    "Preferred Areas of Involvement": ", ".join(involvement),
+                    "How You Can Help": ", ".join(skills_sel),
+                    "Tags": ", ".join(tags_combined),
+                    "Referred By Email": referrer_email,
+                    "Effort Hours": effort_hours if effort_hours else None,
+                    "Donation Total": donation_total if donation_total else None,
+                }
+                st.success("Preview new member")
+                st.dataframe(pd.DataFrame([row]))
+
+                if driver is None:
+                    st.error("Neo4j driver not available. Check connection settings.")
+                elif not email.strip():
+                    st.error("Email is required to upsert the member.")
                 else:
-                    payload = {
-                        "email": cleaned_email,
-                        "firstName": clean_text(first_name),
-                        "lastName": clean_text(last_name),
-                        "gender": None if gender == "Unspecified" else gender,
-                        "age": int(age) if age > 0 else None,
-                        "phone": clean_text(phone),
-                        "effortHours": float(effort_hours) if effort_hours > 0 else None,
-                        "eventsAttendedCount": None,
-                        "referralCount": None,
-                        "lat": lat,
-                        "lon": lon,
-                        "address": clean_text(address),
-                        "supporterType": "Member",
-                    }
-                    if upsert_person(payload):
+                    lat_val = latitude if latitude not in [0.0, None] else None
+                    lon_val = longitude if longitude not in [0.0, None] else None
+
+                    ok = run_write(
+                        """
+                        MERGE (p:Person {email: $email})
+                        ON CREATE SET
+                          p.personId = randomUUID(),
+                          p.createdAt = datetime(),
+                          p.firstName = $firstName,
+                          p.lastName = $lastName,
+                          p.phone = $phone,
+                          p.gender = $gender,
+                          p.age = $age,
+                          p.about = $about,
+                          p.timeAvailability = $timeAvailability,
+                          p.agreesWithManifesto = $agreesWithManifesto,
+                          p.interestedInMembership = $interestedInMembership,
+                          p.facebookGroupMember = $facebookGroupMember,
+                          p.lat = $lat,
+                          p.lon = $lon,
+                          p.effortHours = $effortHours,
+                          p.donationTotal = $donationTotal
+                        ON MATCH SET
+                          p.firstName = coalesce($firstName, p.firstName),
+                          p.lastName = coalesce($lastName, p.lastName),
+                          p.phone = coalesce($phone, p.phone),
+                          p.gender = coalesce($gender, p.gender),
+                          p.age = coalesce($age, p.age),
+                          p.about = coalesce($about, p.about),
+                          p.timeAvailability = coalesce($timeAvailability, p.timeAvailability),
+                          p.agreesWithManifesto = coalesce($agreesWithManifesto, p.agreesWithManifesto),
+                          p.interestedInMembership = coalesce($interestedInMembership, p.interestedInMembership),
+                          p.facebookGroupMember = coalesce($facebookGroupMember, p.facebookGroupMember),
+                          p.lat = coalesce($lat, p.lat),
+                          p.lon = coalesce($lon, p.lon),
+                          p.effortHours = coalesce($effortHours, p.effortHours),
+                          p.donationTotal = coalesce($donationTotal, p.donationTotal)
+
+                        WITH p
+                        FOREACH (_ IN CASE WHEN $address IS NULL OR $address = '' THEN [] ELSE [1] END |
+                          MERGE (a:Address {fullAddress: $address})
+                          ON CREATE SET
+                            a.latitude = $lat,
+                            a.longitude = $lon
+                          ON MATCH SET
+                            a.latitude = coalesce($lat, a.latitude),
+                            a.longitude = coalesce($lon, a.longitude)
+                          MERGE (p)-[:LIVES_AT]->(a)
+                        )
+
+                        MERGE (st:SupporterType {name: $supporterType})
+                        MERGE (p)-[:CLASSIFIED_AS]->(st)
+
+                        FOREACH (area IN $involvementAreas |
+                          MERGE (ia:InvolvementArea {name: area})
+                          MERGE (p)-[:INTERESTED_IN]->(ia)
+                        )
+
+                        FOREACH (skill IN $skills |
+                          MERGE (sk:Skill {name: skill})
+                          MERGE (p)-[:CAN_CONTRIBUTE_WITH]->(sk)
+                        )
+
+                        FOREACH (tag IN $tags |
+                          MERGE (t:Tag {name: tag})
+                          MERGE (p)-[:HAS_TAG]->(t)
+                        )
+
+                        FOREACH (_ IN CASE
+                          WHEN $referrerEmail IS NULL OR $referrerEmail = '' OR $referrerEmail = $email THEN []
+                          ELSE [1]
+                        END |
+                          MERGE (ref:Person {email: $referrerEmail})
+                          ON CREATE SET ref.personId = randomUUID()
+                          MERGE (p)-[:REFERRED_BY]->(ref)
+                        )
+                        """,
+                        {
+                            "email": clean_text(email),
+                            "firstName": clean_text(first_name),
+                            "lastName": clean_text(last_name),
+                            "phone": clean_text(phone),
+                            "gender": clean_text(gender),
+                            "age": age if age else None,
+                            "about": clean_text(about),
+                            "timeAvailability": clean_text(time_availability),
+                            "agreesWithManifesto": agrees,
+                            "interestedInMembership": interested_membership,
+                            "facebookGroupMember": facebook_member,
+                            "supporterType": clean_text(member_type) or "Member",
+                            "lat": lat_val,
+                            "lon": lon_val,
+                            "effortHours": effort_hours if effort_hours else None,
+                            "donationTotal": donation_total if donation_total else None,
+                            "address": clean_text(address),
+                            "involvementAreas": involvement,
+                            "skills": skills_sel,
+                            "tags": tags_combined,
+                            "referrerEmail": clean_text(referrer_email),
+                        },
+                    )
+                    if ok:
                         load_supporter_summary.clear()
                         load_map_data.clear()
                         st.success("Member saved.")
