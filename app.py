@@ -366,6 +366,82 @@ def bulk_upsert_people(rows):
     return run_write(query, {"rows": rows})
 
 
+def render_import_export_section(section_id, default_type_value, export_group):
+    st.markdown("---")
+    st.markdown("**Import / Export (CSV)**")
+    upload = st.file_uploader("Upload CSV", type=["csv"], key=f"{section_id}_upload")
+    if upload is not None:
+        try:
+            df_upload = pd.read_csv(upload)
+        except Exception as exc:
+            st.error(f"Could not read CSV: {exc}")
+            df_upload = pd.DataFrame()
+
+        if not df_upload.empty:
+            st.caption("Preview")
+            st.dataframe(df_upload.head(10), use_container_width=True)
+
+            if st.button("Import CSV", key=f"{section_id}_import_btn"):
+                rows = _build_import_rows(df_upload, default_type_value)
+                if not rows:
+                    st.error("No valid rows found. Ensure the CSV has an email column.")
+                elif bulk_upsert_people(rows):
+                    load_supporter_summary.clear()
+                    load_map_data.clear()
+                    st.success(f"Imported {len(rows)} rows.")
+
+    st.markdown("**Export current data (CSV)**")
+    df_export = load_supporter_summary()
+    if df_export.empty:
+        st.info("No data available to export.")
+    else:
+        df_export = df_export[df_export["group"] == export_group]
+        if df_export.empty:
+            st.info(f"No {export_group.lower()} data available to export.")
+        else:
+            export_df = df_export[
+                [
+                    "fullName",
+                    "email",
+                    "group",
+                    "effortScore",
+                    "effortHours",
+                    "eventAttendCount",
+                    "referralCount",
+                    "joinCount",
+                    "skillCount",
+                    "educationLevel",
+                    "ratingStars",
+                    "gender",
+                    "age",
+                ]
+            ].rename(
+                columns={
+                    "fullName": "name",
+                    "email": "email",
+                    "group": "group",
+                    "effortScore": "effort_score",
+                    "effortHours": "effort_hours",
+                    "eventAttendCount": "events_attended",
+                    "referralCount": "referrals",
+                    "joinCount": "joined",
+                    "skillCount": "skills_count",
+                    "educationLevel": "education",
+                    "ratingStars": "rating",
+                    "gender": "gender",
+                    "age": "age",
+                }
+            )
+            csv_data = export_df.to_csv(index=False)
+            st.download_button(
+                "Download CSV",
+                data=csv_data,
+                file_name=f"{export_group.lower()}_export.csv",
+                mime="text/csv",
+                key=f"{section_id}_export_btn",
+            )
+
+
 def classify_group(types):
     for value in types or []:
         if value and "member" in str(value).lower():
@@ -669,8 +745,8 @@ if driver is None:
     st.error("Missing or invalid Neo4j credentials. Set NEO4J_URI and NEO4J_PASSWORD in .env.")
     st.stop()
 
-tab_intro, tab_supporters, tab_members, tab_map, tab_import = st.tabs(
-    ["Dashboard", "Supporters", "Members", "Map", "Import/Export"]
+tab_intro, tab_supporters, tab_members, tab_map = st.tabs(
+    ["Dashboard", "Supporters", "Members", "Map"]
 )
 
 
@@ -1092,6 +1168,8 @@ with tab_supporters:
             )
             st.dataframe(display_df, use_container_width=True)
 
+    render_import_export_section("supporters", "Supporter", "Supporter")
+
 
 with tab_members:
     st.subheader("Members")
@@ -1402,6 +1480,8 @@ with tab_members:
             )
             st.dataframe(display_df, use_container_width=True)
 
+    render_import_export_section("members", "Member", "Member")
+
 
 with tab_map:
     st.subheader("Map")
@@ -1522,84 +1602,6 @@ with tab_map:
 
 
 
-with tab_import:
-    st.subheader("Import / Export")
-    st.markdown("**Import supporters or members (CSV)**")
-    upload = st.file_uploader("Upload CSV", type=["csv"])
-    default_type = st.selectbox(
-        "Default type (if missing)", ["Supporter", "Member", "Both"], key="import_default_type"
-    )
-    default_type_value = default_type
-    if default_type == "Both":
-        st.caption("Rows without a supporter_type will default to Supporter.")
-        default_type_value = "Supporter"
-
-    if upload is not None:
-        try:
-            df_upload = pd.read_csv(upload)
-        except Exception as exc:
-            st.error(f"Could not read CSV: {exc}")
-            df_upload = pd.DataFrame()
-
-        if not df_upload.empty:
-            st.caption("Preview")
-            st.dataframe(df_upload.head(10), use_container_width=True)
-
-            if st.button("Import CSV"):
-                rows = _build_import_rows(df_upload, default_type_value)
-                if not rows:
-                    st.error("No valid rows found. Ensure the CSV has an email column.")
-                elif bulk_upsert_people(rows):
-                    load_supporter_summary.clear()
-                    load_map_data.clear()
-                    st.success(f"Imported {len(rows)} rows.")
-
-    st.markdown("---")
-    st.markdown("**Export current data (CSV)**")
-    df_export = load_supporter_summary()
-    if df_export.empty:
-        st.info("No data available to export.")
-    else:
-        export_df = df_export[
-            [
-                "fullName",
-                "email",
-                "group",
-                "effortScore",
-                "effortHours",
-                "eventAttendCount",
-                "referralCount",
-                "joinCount",
-                "skillCount",
-                "educationLevel",
-                "ratingStars",
-                "gender",
-                "age",
-            ]
-        ].rename(
-            columns={
-                "fullName": "name",
-                "email": "email",
-                "group": "group",
-                "effortScore": "effort_score",
-                "effortHours": "effort_hours",
-                "eventAttendCount": "events_attended",
-                "referralCount": "referrals",
-                "joinCount": "joined",
-                "skillCount": "skills_count",
-                "educationLevel": "education",
-                "ratingStars": "rating",
-                "gender": "gender",
-                "age": "age",
-            }
-        )
-        csv_data = export_df.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            data=csv_data,
-            file_name="supporters_export.csv",
-            mime="text/csv",
-        )
 
 
 
